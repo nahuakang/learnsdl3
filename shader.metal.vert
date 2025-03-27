@@ -27,6 +27,27 @@ vertex main0_out main0(uint gl_VertexIndex [[vertex_id]])
             {
                 out.gl_Position = float4(0.5, -0.5, 0.0, 1.0);
             }
+            else
+            {
+                if (int(gl_VertexIndex) == 3)
+                {
+                    out.gl_Position = float4(0.5, -0.5, 0.0, 1.0);
+                }
+                else
+                {
+                    if (int(gl_VertexIndex) == 4)
+                    {
+                        out.gl_Position = float4(1.0, 0.5, 0.0, 1.0);
+                    }
+                    else
+                    {
+                        if (int(gl_VertexIndex) == 5)
+                        {
+                            out.gl_Position = float4(1.5, -0.5, 0.0, 1.0);
+                        }
+                    }
+                }
+            }
         }
     }
     return out;

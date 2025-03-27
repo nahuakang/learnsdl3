@@ -39,7 +39,7 @@ main :: proc() {
 
 	ok := sdl.Init({.VIDEO});assert(ok)
 
-	window := sdl.CreateWindow("Hello SDL3", 1280, 780, {});assert(window != nil)
+	window := sdl.CreateWindow("Learn SDL3", 1280, 780, {});assert(window != nil)
 
 	gpu := sdl.CreateGPUDevice(GPU_SHADER_FORMAT, true, nil);assert(gpu != nil)
 
@@ -100,7 +100,7 @@ main :: proc() {
 			}
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
-			sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
+			sdl.DrawGPUPrimitives(render_pass, 6, 1, 0, 0)
 			sdl.EndGPURenderPass(render_pass)
 		}
 
