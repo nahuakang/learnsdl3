@@ -77,7 +77,8 @@ main :: proc() {
 	win_size: [2]i32
 	ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
 
-	rotation := f32(0)
+	rotation1 := f32(0)
+	rotation2 := f32(0)
 	proj_mat := linalg.matrix4_perspective_f32(
 		linalg.to_radians(f32(70)),
 		f32(win_size.x) / f32(win_size.y),
@@ -119,13 +120,14 @@ main :: proc() {
 		);assert(ok)
 
 		// Update rotation
-		rotation += ROTATION_SPEED * delta_time
-		model_mat :=
-			linalg.matrix4_translate_f32({0, 0, -5}) *
-			linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
-		ubo := UBO {
-			mvp = proj_mat * model_mat,
-		}
+		rotation1 += ROTATION_SPEED * delta_time
+		rotation2 += ROTATION_SPEED * delta_time * 1.5 // Different speed for variety
+		model_mat1 :=
+			linalg.matrix4_translate_f32({-0.75, 0, -5}) *
+			linalg.matrix4_rotate_f32(rotation1, {0, 1, 0})
+		model_mat2 :=
+			linalg.matrix4_translate_f32({0.75, 0, -5}) *
+			linalg.matrix4_rotate_f32(rotation1, {0, 1, 0})
 
 		if swapchain_tex != nil {
 			color_target := sdl.GPUColorTargetInfo {
@@ -136,8 +138,19 @@ main :: proc() {
 			}
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
-			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
+
+			ubo1 := UBO {
+				mvp = proj_mat * model_mat1,
+			}
+			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo1, size_of(ubo1))
 			sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
+
+			ubo2 := UBO {
+				mvp = proj_mat * model_mat2,
+			}
+			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo2, size_of(ubo2))
+			sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
+
 			sdl.EndGPURenderPass(render_pass)
 		}
 
