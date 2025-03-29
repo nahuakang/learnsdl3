@@ -10,32 +10,21 @@ struct UBO
 
 struct main0_out
 {
+    float4 out_color [[user(locn0)]];
     float4 gl_Position [[position]];
 };
 
-vertex main0_out main0(constant UBO& _47 [[buffer(0)]], uint gl_VertexIndex [[vertex_id]])
+struct main0_in
+{
+    float3 position [[attribute(0)]];
+    float4 color [[attribute(1)]];
+};
+
+vertex main0_out main0(main0_in in [[stage_in]], constant UBO& _19 [[buffer(0)]])
 {
     main0_out out = {};
-    float4 position;
-    if (int(gl_VertexIndex) == 0)
-    {
-        position = float4(-0.5, -0.5, 0.0, 1.0);
-    }
-    else
-    {
-        if (int(gl_VertexIndex) == 1)
-        {
-            position = float4(0.0, 0.5, 0.0, 1.0);
-        }
-        else
-        {
-            if (int(gl_VertexIndex) == 2)
-            {
-                position = float4(0.5, -0.5, 0.0, 1.0);
-            }
-        }
-    }
-    out.gl_Position = _47.mvp * position;
+    out.gl_Position = _19.mvp * float4(in.position, 1.0);
+    out.out_color = in.color;
     return out;
 }
 

@@ -3,6 +3,7 @@ package main
 import "base:runtime"
 import "core:log"
 import "core:math/linalg"
+import "core:mem"
 import "core:strings"
 import sdl "vendor:sdl3"
 
@@ -13,6 +14,13 @@ ROTATION_SPEED := linalg.to_radians(f32(90))
 /* VARIABLES */
 default_context: runtime.Context
 
+
+/* TYPES */
+Vec3 :: [3]f32
+Vertex_Data :: struct {
+	pos:   Vec3,
+	color: sdl.FColor,
+}
 
 when ODIN_OS == .Windows {
 	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.SPIRV}
@@ -56,12 +64,67 @@ main :: proc() {
 	vert_shader := load_shader(gpu, vert_shader_code, .VERTEX, 1)
 	frag_shader := load_shader(gpu, frag_shader_code, .FRAGMENT, 0)
 
+	// VERTEX DATA COPYING
+	// Vertex data
+	vertices := []Vertex_Data {
+		{pos = {-0.5, -0.5, 0}, color = {1, 0, 0, 1}},
+		{pos = {0, 0.5, 0}, color = {0, 1, 0, 1}},
+		{pos = {0.5, -0.5, 0}, color = {0, 0, 1, 1}},
+	}
+	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
+	// The actual GPU-side buffer that will be used for rendering
+	vertex_buf := sdl.CreateGPUBuffer(
+		device = gpu,
+		createinfo = {usage = {.VERTEX}, size = u32(vertices_byte_size)},
+	)
+	// A staging buffer in a memory type that allows CPU access; transfer from CPU to GPU
+	transfer_buf := sdl.CreateGPUTransferBuffer(
+		device = gpu,
+		createinfo = {usage = .UPLOAD, size = u32(vertices_byte_size)},
+	)
+	// A pointer to the mapped memory of the transfer buffer, which allows the CPU to write directly to it
+	transfer_mem := sdl.MapGPUTransferBuffer(
+		device = gpu,
+		transfer_buffer = transfer_buf,
+		cycle = false,
+	)
+	mem.copy(dst = transfer_mem, src = raw_data(vertices), len = vertices_byte_size)
+	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = transfer_buf)
+	// Copy Command Buffer
+	copy_cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
+	copy_pass := sdl.BeginGPUCopyPass(copy_cmd_buf)
+	sdl.UploadToGPUBuffer(
+		copy_pass = copy_pass,
+		source = {transfer_buffer = transfer_buf},
+		destination = {buffer = vertex_buf, size = u32(vertices_byte_size)},
+		cycle = false,
+	)
+	sdl.EndGPUCopyPass(copy_pass)
+	ok = sdl.SubmitGPUCommandBuffer(copy_cmd_buf);assert(ok)
+	sdl.ReleaseGPUTransferBuffer(gpu, transfer_buf)
+
+	vertex_attrs := []sdl.GPUVertexAttribute {
+		{location = 0, format = .FLOAT3, offset = u32(offset_of(Vertex_Data, pos))},
+		{location = 1, format = .FLOAT4, offset = u32(offset_of(Vertex_Data, color))},
+	}
+
 	pipeline := sdl.CreateGPUGraphicsPipeline(
 		gpu,
 		{
 			vertex_shader = vert_shader,
 			fragment_shader = frag_shader,
 			primitive_type = .TRIANGLELIST,
+			vertex_input_state = {
+				num_vertex_buffers = 1,
+				vertex_buffer_descriptions = &(
+					sdl.GPUVertexBufferDescription {
+						slot=0,
+						pitch = size_of(Vertex_Data)
+					}
+				),
+				num_vertex_attributes = u32(len(vertex_attrs)),
+				vertex_attributes = raw_data(vertex_attrs),
+			},
 			target_info = {
 				num_color_targets = 1,
 				color_target_descriptions = &(sdl.GPUColorTargetDescription {
@@ -136,6 +199,7 @@ main :: proc() {
 			}
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
+			sdl.BindGPUVertexBuffers(render_pass, 0, &(sdl.GPUBufferBinding{buffer = vertex_buf}), 1)
 			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
 			sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
 			sdl.EndGPURenderPass(render_pass)
