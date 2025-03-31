@@ -22,6 +22,20 @@ Vertex_Data :: struct {
 	color: sdl.FColor,
 }
 
+Mesh :: struct {
+	vertex_buffer:             ^sdl.GPUBuffer,
+	index_buffer:              ^sdl.GPUBuffer,
+	index_count:               u32,
+	index_element_size:        sdl.GPUIndexElementSize,
+	position:                  Vec3,
+	rotation_axis:             Vec3,
+	rotation_speed_multiplier: f32,
+}
+
+UBO :: struct {
+	mvp: matrix[4, 4]f32,
+}
+
 when ODIN_OS == .Windows {
 	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.SPIRV}
 	entrypoint := "main"
@@ -32,6 +46,128 @@ when ODIN_OS == .Windows {
 	entrypoint := "main0"
 	frag_shader_code := #load("shader.metal.frag")
 	vert_shader_code := #load("shader.metal.vert")
+}
+
+create_mesh :: proc(
+	gpu: ^sdl.GPUDevice,
+	vertices: []Vertex_Data,
+	indices: []u16,
+	position: Vec3,
+	rotation_axis: Vec3 = {0, 1, 0},
+	rotation_speed_multiplier: f32 = 1.0,
+) -> Mesh {
+	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
+	indices_byte_size := len(indices) * size_of(u16)
+
+	vertex_buf := sdl.CreateGPUBuffer(gpu, {usage = {.VERTEX}, size = u32(vertices_byte_size)})
+	index_buf := sdl.CreateGPUBuffer(gpu, {usage = {.INDEX}, size = u32(indices_byte_size)})
+
+	vertex_transfer_buf := sdl.CreateGPUTransferBuffer(
+		gpu,
+		{usage = .UPLOAD, size = u32(vertices_byte_size)},
+	)
+	index_transfer_buf := sdl.CreateGPUTransferBuffer(
+		gpu,
+		{usage = .UPLOAD, size = u32(indices_byte_size)},
+	)
+
+	vertex_transfer_mem := sdl.MapGPUTransferBuffer(
+		device = gpu,
+		transfer_buffer = vertex_transfer_buf,
+		cycle = false,
+	)
+	mem.copy(dst = vertex_transfer_mem, src = raw_data(vertices), len = vertices_byte_size)
+	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = vertex_transfer_buf)
+
+	index_transfer_mem := sdl.MapGPUTransferBuffer(
+		device = gpu,
+		transfer_buffer = index_transfer_buf,
+		cycle = false,
+	)
+	mem.copy(dst = index_transfer_mem, src = raw_data(indices), len = indices_byte_size)
+	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = index_transfer_buf)
+
+	copy_cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
+	copy_pass := sdl.BeginGPUCopyPass(copy_cmd_buf)
+	sdl.UploadToGPUBuffer(
+		copy_pass = copy_pass,
+		source = {transfer_buffer = vertex_transfer_buf},
+		destination = {buffer = vertex_buf, size = u32(vertices_byte_size)},
+		cycle = false,
+	)
+	sdl.UploadToGPUBuffer(
+		copy_pass = copy_pass,
+		source = {transfer_buffer = index_transfer_buf},
+		destination = {buffer = index_buf, size = u32(indices_byte_size)},
+		cycle = false,
+	)
+	sdl.EndGPUCopyPass(copy_pass)
+	ok := sdl.SubmitGPUCommandBuffer(copy_cmd_buf);assert(ok)
+	sdl.ReleaseGPUTransferBuffer(gpu, vertex_transfer_buf)
+	sdl.ReleaseGPUTransferBuffer(gpu, index_transfer_buf)
+
+	return Mesh {
+		vertex_buffer = vertex_buf,
+		index_buffer = index_buf,
+		index_count = u32(len(indices)),
+		index_element_size = ._16BIT,
+		position = position,
+		rotation_axis = rotation_axis,
+		rotation_speed_multiplier = rotation_speed_multiplier,
+	}
+}
+
+
+destroy_mesh :: proc(gpu: ^sdl.GPUDevice, mesh: ^Mesh) {
+	sdl.ReleaseGPUBuffer(gpu, mesh.vertex_buffer)
+	sdl.ReleaseGPUBuffer(gpu, mesh.index_buffer)
+}
+
+
+draw_mesh :: proc(
+	render_pass: ^sdl.GPURenderPass,
+	cmd_buf: ^sdl.GPUCommandBuffer,
+	mesh: ^Mesh,
+	proj_mat: matrix[4, 4]f32,
+	rotation: f32,
+) {
+	mesh_rotation := rotation * mesh.rotation_speed_multiplier
+	model_mat :=
+		linalg.matrix4_translate_f32(mesh.position) *
+		linalg.matrix4_rotate_f32(mesh_rotation, mesh.rotation_axis)
+
+	ubo := UBO {
+		mvp = proj_mat * model_mat,
+	}
+
+	sdl.BindGPUVertexBuffers(
+		render_pass = render_pass,
+		first_slot = 0,
+		bindings = &(sdl.GPUBufferBinding{buffer = mesh.vertex_buffer}),
+		num_bindings = 1,
+	)
+
+	sdl.BindGPUIndexBuffer(
+		render_pass = render_pass,
+		binding = sdl.GPUBufferBinding{buffer = mesh.index_buffer},
+		index_element_size = mesh.index_element_size,
+	)
+
+	sdl.PushGPUVertexUniformData(
+		command_buffer = cmd_buf,
+		slot_index = 0,
+		data = &ubo,
+		length = size_of(ubo),
+	)
+
+	sdl.DrawGPUIndexedPrimitives(
+		render_pass = render_pass,
+		num_indices = mesh.index_count,
+		num_instances = 1,
+		first_index = 0,
+		vertex_offset = 0,
+		first_instance = 0,
+	)
 }
 
 
@@ -56,6 +192,7 @@ main :: proc() {
 	ok := sdl.Init({.VIDEO});assert(ok)
 
 	window := sdl.CreateWindow("Hello SDL3", 1280, 780, {});assert(window != nil)
+	sdl.SetWindowFullscreen(window, true)
 
 	gpu := sdl.CreateGPUDevice(GPU_SHADER_FORMAT, true, nil);assert(gpu != nil)
 
@@ -64,64 +201,39 @@ main :: proc() {
 	vert_shader := load_shader(gpu, vert_shader_code, .VERTEX, 1)
 	frag_shader := load_shader(gpu, frag_shader_code, .FRAGMENT, 0)
 
-	// VERTEX DATA COPYING
-	// Vertex data
-	vertices := []Vertex_Data {
-		{pos = {-0.5, 0.5, 0}, color = {1, 0, 0, 1}}, // tl
-		{pos = {0.5, 0.5, 0}, color = {0, 1, 1, 1}}, // tr
-		{pos = {-0.5, -0.5, 0}, color = {1, 0, 1, 1}}, // bl
-		{pos = {0.5, -0.5, 0}, color = {1, 0, 1, 1}}, // br
+	// Define triangle mesh data
+	triangle_vertices := []Vertex_Data {
+		{pos = {-0.5, -0.5, 0}, color = {1, 0, 0, 1}},
+		{pos = {0, 0.5, 0}, color = {0, 1, 0, 1}},
+		{pos = {0.5, -0.5, 0}, color = {0, 0, 1, 1}},
 	}
-	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
-	// Index data
-	indices := []u16{0, 1, 2, 2, 1, 3}
-	indices_byte_size := len(indices) * size_of(indices[0])
+	triangle_indices := []u16{0, 1, 2}
+	// Define quad mesh data
+	quad_vertices := []Vertex_Data {
+		{pos = {-0.5, -0.5, 0}, color = {1, 1, 0, 1}},
+		{pos = {-0.5, 0.5, 0}, color = {1, 0, 1, 1}},
+		{pos = {0.5, 0.5, 0}, color = {0, 1, 1, 1}},
+		{pos = {0.5, -0.5, 0}, color = {0.5, 0.5, 1, 1}},
+	}
+	quad_indices := []u16{0, 1, 2, 0, 2, 3}
 
-	// The actual GPU-side buffer that will be used for rendering
-	vertex_buf := sdl.CreateGPUBuffer(
-		device = gpu,
-		createinfo = {usage = {.VERTEX}, size = u32(vertices_byte_size)},
+	triangle_mesh := create_mesh(
+		gpu,
+		triangle_vertices,
+		triangle_indices,
+		position = {-1.5, 0, -5},
+		rotation_axis = {0, 1, 0},
+		rotation_speed_multiplier = 0.0,
 	)
-	index_buf := sdl.CreateGPUBuffer(
-		device = gpu,
-		createinfo = {usage = {.INDEX}, size = u32(indices_byte_size)},
+	quad_mesh := create_mesh(
+		gpu,
+		quad_vertices,
+		quad_indices,
+		position = {1.5, 0, -5},
+		rotation_axis = {0, 1, 1},
+		rotation_speed_multiplier = 0.0,
 	)
-	// A staging buffer in a memory type that allows CPU access; transfer from CPU to GPU
-	transfer_buf := sdl.CreateGPUTransferBuffer(
-		device = gpu,
-		createinfo = {usage = .UPLOAD, size = u32(vertices_byte_size + indices_byte_size)},
-	)
-	// A pointer to the mapped memory of the transfer buffer, which allows the CPU to write directly to it
-	transfer_mem := transmute([^]byte)sdl.MapGPUTransferBuffer(
-		device = gpu,
-		transfer_buffer = transfer_buf,
-		cycle = false,
-	)
-	mem.copy(dst = transfer_mem, src = raw_data(vertices), len = vertices_byte_size)
-	mem.copy(
-		dst = transfer_mem[vertices_byte_size:],
-		src = raw_data(indices),
-		len = indices_byte_size,
-	)
-	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = transfer_buf)
-	// Copy Command Buffer
-	copy_cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
-	copy_pass := sdl.BeginGPUCopyPass(copy_cmd_buf)
-	sdl.UploadToGPUBuffer(
-		copy_pass = copy_pass,
-		source = {transfer_buffer = transfer_buf},
-		destination = {buffer = vertex_buf, size = u32(vertices_byte_size)},
-		cycle = false,
-	)
-	sdl.UploadToGPUBuffer(
-		copy_pass = copy_pass,
-		source = {transfer_buffer = transfer_buf, offset = u32(vertices_byte_size)},
-		destination = {buffer = index_buf, size = u32(indices_byte_size)},
-		cycle = false,
-	)
-	sdl.EndGPUCopyPass(copy_pass)
-	ok = sdl.SubmitGPUCommandBuffer(copy_cmd_buf);assert(ok)
-	sdl.ReleaseGPUTransferBuffer(gpu, transfer_buf)
+	meshes := []Mesh{triangle_mesh, quad_mesh}
 
 	vertex_attrs := []sdl.GPUVertexAttribute {
 		{location = 0, format = .FLOAT3, offset = u32(offset_of(Vertex_Data, pos))},
@@ -165,9 +277,6 @@ main :: proc() {
 		0.0001,
 		1000,
 	)
-	UBO :: struct {
-		mvp: matrix[4, 4]f32,
-	}
 	last_ticks := sdl.GetTicks()
 
 	main_loop: for {
@@ -187,6 +296,7 @@ main :: proc() {
 		}
 
 		// update game state
+		rotation += ROTATION_SPEED * delta_time
 
 		// render
 		cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
@@ -199,15 +309,6 @@ main :: proc() {
 			nil,
 		);assert(ok)
 
-		// Update rotation
-		rotation += ROTATION_SPEED * delta_time
-		model_mat :=
-			linalg.matrix4_translate_f32({0, 0, -5}) *
-			linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
-		ubo := UBO {
-			mvp = proj_mat * model_mat,
-		}
-
 		if swapchain_tex != nil {
 			color_target := sdl.GPUColorTargetInfo {
 				texture     = swapchain_tex,
@@ -217,19 +318,11 @@ main :: proc() {
 			}
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
-			sdl.BindGPUVertexBuffers(
-				render_pass = render_pass,
-				first_slot = 0,
-				bindings = &(sdl.GPUBufferBinding{buffer = vertex_buf}),
-				num_bindings = 1,
-			)
-			sdl.BindGPUIndexBuffer(
-				render_pass = render_pass,
-				binding = {buffer = index_buf},
-				index_element_size = ._16BIT,
-			)
-			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
-			sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
+
+			for &mesh in meshes {
+				draw_mesh(render_pass, cmd_buf, &mesh, proj_mat, rotation)
+			}
+
 			sdl.EndGPURenderPass(render_pass)
 		}
 
