@@ -67,28 +67,42 @@ main :: proc() {
 	// VERTEX DATA COPYING
 	// Vertex data
 	vertices := []Vertex_Data {
-		{pos = {-0.5, -0.5, 0}, color = {1, 0, 0, 1}},
-		{pos = {0, 0.5, 0}, color = {0, 1, 0, 1}},
-		{pos = {0.5, -0.5, 0}, color = {0, 0, 1, 1}},
+		{pos = {-0.5, 0.5, 0}, color = {1, 0, 0, 1}}, // tl
+		{pos = {0.5, 0.5, 0}, color = {0, 1, 1, 1}}, // tr
+		{pos = {-0.5, -0.5, 0}, color = {1, 0, 1, 1}}, // bl
+		{pos = {0.5, -0.5, 0}, color = {1, 0, 1, 1}}, // br
 	}
 	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
+	// Index data
+	indices := []u16{0, 1, 2, 2, 1, 3}
+	indices_byte_size := len(indices) * size_of(indices[0])
+
 	// The actual GPU-side buffer that will be used for rendering
 	vertex_buf := sdl.CreateGPUBuffer(
 		device = gpu,
 		createinfo = {usage = {.VERTEX}, size = u32(vertices_byte_size)},
 	)
+	index_buf := sdl.CreateGPUBuffer(
+		device = gpu,
+		createinfo = {usage = {.INDEX}, size = u32(indices_byte_size)},
+	)
 	// A staging buffer in a memory type that allows CPU access; transfer from CPU to GPU
 	transfer_buf := sdl.CreateGPUTransferBuffer(
 		device = gpu,
-		createinfo = {usage = .UPLOAD, size = u32(vertices_byte_size)},
+		createinfo = {usage = .UPLOAD, size = u32(vertices_byte_size + indices_byte_size)},
 	)
 	// A pointer to the mapped memory of the transfer buffer, which allows the CPU to write directly to it
-	transfer_mem := sdl.MapGPUTransferBuffer(
+	transfer_mem := transmute([^]byte)sdl.MapGPUTransferBuffer(
 		device = gpu,
 		transfer_buffer = transfer_buf,
 		cycle = false,
 	)
 	mem.copy(dst = transfer_mem, src = raw_data(vertices), len = vertices_byte_size)
+	mem.copy(
+		dst = transfer_mem[vertices_byte_size:],
+		src = raw_data(indices),
+		len = indices_byte_size,
+	)
 	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = transfer_buf)
 	// Copy Command Buffer
 	copy_cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
@@ -97,6 +111,12 @@ main :: proc() {
 		copy_pass = copy_pass,
 		source = {transfer_buffer = transfer_buf},
 		destination = {buffer = vertex_buf, size = u32(vertices_byte_size)},
+		cycle = false,
+	)
+	sdl.UploadToGPUBuffer(
+		copy_pass = copy_pass,
+		source = {transfer_buffer = transfer_buf, offset = u32(vertices_byte_size)},
+		destination = {buffer = index_buf, size = u32(indices_byte_size)},
 		cycle = false,
 	)
 	sdl.EndGPUCopyPass(copy_pass)
@@ -116,12 +136,10 @@ main :: proc() {
 			primitive_type = .TRIANGLELIST,
 			vertex_input_state = {
 				num_vertex_buffers = 1,
-				vertex_buffer_descriptions = &(
-					sdl.GPUVertexBufferDescription {
-						slot=0,
-						pitch = size_of(Vertex_Data)
-					}
-				),
+				vertex_buffer_descriptions = &(sdl.GPUVertexBufferDescription {
+						slot = 0,
+						pitch = size_of(Vertex_Data),
+					}),
 				num_vertex_attributes = u32(len(vertex_attrs)),
 				vertex_attributes = raw_data(vertex_attrs),
 			},
@@ -199,9 +217,19 @@ main :: proc() {
 			}
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
-			sdl.BindGPUVertexBuffers(render_pass, 0, &(sdl.GPUBufferBinding{buffer = vertex_buf}), 1)
+			sdl.BindGPUVertexBuffers(
+				render_pass = render_pass,
+				first_slot = 0,
+				bindings = &(sdl.GPUBufferBinding{buffer = vertex_buf}),
+				num_bindings = 1,
+			)
+			sdl.BindGPUIndexBuffer(
+				render_pass = render_pass,
+				binding = {buffer = index_buf},
+				index_element_size = ._16BIT,
+			)
 			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
-			sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
+			sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
 			sdl.EndGPURenderPass(render_pass)
 		}
 
