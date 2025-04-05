@@ -78,29 +78,26 @@ draw_texture :: proc(
 	texture: Texture2D,
 	pos_x: f32,
 	pos_y: f32,
-	tint: sdl.FColor,
+	pos_z: f32 = 0,
+	tint: sdl.FColor = sdl.FColor{1, 1, 1, 1},
+	scale: f32 = 1,
 ) {
 	win_size: [2]i32
 	ok := sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
+	ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
 
-	rotation := f32(0)
-	proj_mat := linalg.matrix4_perspective_f32(
-		linalg.to_radians(f32(70)),
-		f32(win_size.x) / f32(win_size.y),
-		0.0001,
-		1000,
-	)
-	model_mat :=
-		linalg.matrix4_translate_f32({0, 0, -2}) * linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
 	ubo := UBO {
-		mvp = proj_mat * model_mat,
+		mvp         = linalg.MATRIX4F32_IDENTITY,
+		window_size = {f32(win_size.x), f32(win_size.y)},
 	}
+	scaled_width := f32(texture.size.x) * scale
+	scaled_height := f32(texture.size.y) * scale
 
 	vertices := []Vertex_Data {
-		{pos = {pos_x, pos_y + 1, 0}, color = tint, uv = {0, 0}}, // tl
-		{pos = {pos_x + 1, pos_y + 1, 0}, color = tint, uv = {1, 0}}, // tr
+		{pos = {pos_x, pos_y + scaled_height, 0}, color = tint, uv = {0, 0}}, // tl
+		{pos = {pos_x + scaled_width, pos_y + scaled_height, 0}, color = tint, uv = {1, 0}}, // tr
 		{pos = {pos_x, pos_y, 0}, color = tint, uv = {0, 1}}, // bl
-		{pos = {pos_x + 1, pos_y, 0}, color = tint, uv = {1, 1}}, // br
+		{pos = {pos_x + scaled_width, pos_y, 0}, color = tint, uv = {1, 1}}, // br
 	}
 	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
 	// Index data

@@ -28,7 +28,8 @@ Vertex_Data :: struct {
 
 
 UBO :: struct {
-	mvp: matrix[4, 4]f32,
+	mvp:         matrix[4, 4]f32,
+	window_size: [2]f32,
 }
 
 when ODIN_OS == .Windows {
@@ -65,6 +66,7 @@ main :: proc() {
 	ok := sdl.Init({.VIDEO});assert(ok)
 
 	window := sdl.CreateWindow("Hello SDL3", 1280, 780, {});assert(window != nil)
+	// sdl.SetWindowFullscreen(window, true)
 
 	gpu := sdl.CreateGPUDevice(GPU_SHADER_FORMAT, true, nil);assert(gpu != nil)
 
@@ -85,7 +87,8 @@ main :: proc() {
 		num_samplers = 1,
 	)
 
-	texture := load_texture(device = gpu, file_name = "assets/cobblestone_1.png")
+	cobblestone_texture := load_texture(device = gpu, file_name = "assets/cobblestone_1.png")
+	office_texture := load_texture(device = gpu, file_name = "assets/office.png")
 
 	vertex_attrs := []sdl.GPUVertexAttribute {
 		{location = 0, format = .FLOAT3, offset = u32(offset_of(Vertex_Data, pos))},
@@ -122,6 +125,8 @@ main :: proc() {
 
 	win_size: [2]i32
 	ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
+	log.log(log.Level.Info, "Window width: %v", win_size.x)
+	log.log(log.Level.Info, "Window height: %v", win_size.y)
 
 	rotation := f32(0)
 	proj_mat := linalg.matrix4_perspective_f32(
@@ -137,6 +142,7 @@ main :: proc() {
 		new_ticks := sdl.GetTicks()
 		delta_time := f32(new_ticks - last_ticks) / 1000
 		last_ticks = new_ticks
+		ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
 
 		// process events
 		ev: sdl.Event
@@ -162,15 +168,6 @@ main :: proc() {
 			nil,
 		);assert(ok)
 
-		// Update rotation
-		rotation += ROTATION_SPEED * delta_time
-		model_mat :=
-			linalg.matrix4_translate_f32({0, 0, -2}) *
-			linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
-		ubo := UBO {
-			mvp = proj_mat * model_mat,
-		}
-
 		if swapchain_tex != nil {
 			color_target := sdl.GPUColorTargetInfo {
 				texture     = swapchain_tex,
@@ -181,15 +178,53 @@ main :: proc() {
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
 
+			// Draw texture to fit window
+			win_size: [2]i32
+			ok := sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
+			// Calculate scale to fill window while maintaining aspect ratio
+			scale_x := f32(win_size.x) / f32(office_texture.size.x)
+			scale_y := f32(win_size.y) / f32(office_texture.size.y)
+			scale := max(scale_x, scale_y)
+			// Calculate scaled dimensions
+			scaled_width := f32(office_texture.size.x) * scale
+			scaled_height := f32(office_texture.size.y) * scale
+
+			// Center the texture in the window
+			pos_x := (f32(win_size.x) - scaled_width) / 2
+			pos_y := (f32(win_size.y) - scaled_height) / 2
+
 			draw_texture(
 				device = gpu,
 				render_pass = render_pass,
 				command_buffer = cmd_buf,
 				window = window,
-				texture = texture,
-				pos_x = -0.5,
-				pos_y = -0.5,
+				texture = office_texture,
+				pos_x = pos_x,
+				pos_y = pos_y,
 				tint = WHITE,
+				scale = scale,
+			)
+
+			draw_texture(
+				device = gpu,
+				render_pass = render_pass,
+				command_buffer = cmd_buf,
+				window = window,
+				texture = cobblestone_texture,
+				pos_x = 100,
+				pos_y = 100,
+				scale = 0.2,
+			)
+
+			draw_texture(
+				device = gpu,
+				render_pass = render_pass,
+				command_buffer = cmd_buf,
+				window = window,
+				texture = cobblestone_texture,
+				pos_x = 500,
+				pos_y = 500,
+				scale = 0.2,
 			)
 
 			sdl.EndGPURenderPass(render_pass)
