@@ -10,8 +10,8 @@ struct UBO
 
 struct main0_out
 {
-    float4 out_color [[user(locn0)]];
-    float2 out_uv [[user(locn1)]];
+    float4 frag_color [[user(locn0)]];
+    float2 frag_uv [[user(locn1)]];
     float4 gl_Position [[position]];
 };
 
@@ -26,8 +26,8 @@ vertex main0_out main0(main0_in in [[stage_in]], constant UBO& _19 [[buffer(0)]]
 {
     main0_out out = {};
     out.gl_Position = _19.mvp * float4(in.position, 1.0);
-    out.out_color = in.color;
-    out.out_uv = in.uv;
+    out.frag_color = in.color;
+    out.frag_uv = in.uv;
     return out;
 }
 

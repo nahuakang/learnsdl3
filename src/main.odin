@@ -29,14 +29,27 @@ Vertex_Data :: struct {
 when ODIN_OS == .Windows {
 	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.SPIRV}
 	entrypoint := "main"
-	frag_shader_code := #load("shader.spv.frag")
-	vert_shader_code := #load("shader.spv.vert")
+	frag_shader_code := #load("../shaders/shader.spv.frag")
+	vert_shader_code := #load("../shaders/shader.spv.vert")
 } else when ODIN_OS == .Darwin {
 	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.MSL}
 	entrypoint := "main0"
-	frag_shader_code := #load("shader.metal.frag")
-	vert_shader_code := #load("shader.metal.vert")
+	frag_shader_code := #load("../shaders/shader.metal.frag")
+	vert_shader_code := #load("../shaders/shader.metal.vert")
 }
+
+
+// Mesh :: struct {
+// 	vertex_buffer:             ^sdl.GPUBuffer,
+// 	index_buffer:              ^sdl.GPUBuffer,
+// 	index_count:               u32,
+// 	index_element_size:        sdl.GPUIndexElementSize,
+// 	position:                  Vec3,
+// 	rotation_axis:             Vec3,
+// 	rotation_speed_multiplier: f32,
+// 	texture:                   ^sdl.GPUTexture,
+// 	sampler:                   ^sdl.GPUSampler,
+// }
 
 
 main :: proc() {
@@ -82,7 +95,7 @@ main :: proc() {
 
 	img_size: [2]i32
 	pixels := stbi.load(
-		"cobblestone_1.png",
+		"assets/cobblestone_1.png",
 		&img_size.x,
 		&img_size.y,
 		nil,
