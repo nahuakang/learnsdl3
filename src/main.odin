@@ -18,12 +18,17 @@ WHITE := sdl.FColor{1, 1, 1, 1}
 default_context: runtime.Context
 
 
-/* TYPES */
+/* GRAPHICS TYPES */
 Vec3 :: [3]f32
 Vertex_Data :: struct {
 	pos:   Vec3,
 	color: sdl.FColor,
 	uv:    [2]f32,
+}
+
+
+UBO :: struct {
+	mvp: matrix[4, 4]f32,
 }
 
 when ODIN_OS == .Windows {
@@ -37,19 +42,6 @@ when ODIN_OS == .Windows {
 	frag_shader_code := #load("../shaders/shader.metal.frag")
 	vert_shader_code := #load("../shaders/shader.metal.vert")
 }
-
-
-// Mesh :: struct {
-// 	vertex_buffer:             ^sdl.GPUBuffer,
-// 	index_buffer:              ^sdl.GPUBuffer,
-// 	index_count:               u32,
-// 	index_element_size:        sdl.GPUIndexElementSize,
-// 	position:                  Vec3,
-// 	rotation_axis:             Vec3,
-// 	rotation_speed_multiplier: f32,
-// 	texture:                   ^sdl.GPUTexture,
-// 	sampler:                   ^sdl.GPUSampler,
-// }
 
 
 main :: proc() {
@@ -93,114 +85,7 @@ main :: proc() {
 		num_samplers = 1,
 	)
 
-	img_size: [2]i32
-	pixels := stbi.load(
-		"assets/cobblestone_1.png",
-		&img_size.x,
-		&img_size.y,
-		nil,
-		4,
-	);assert(pixels != nil)
-	pixels_byte_size := img_size.x * img_size.y * 4
-
-	texture := sdl.CreateGPUTexture(
-		device = gpu,
-		createinfo = sdl.GPUTextureCreateInfo {
-			format = .R8G8B8A8_UNORM,
-			usage = {.SAMPLER},
-			width = u32(img_size.x),
-			height = u32(img_size.y),
-			layer_count_or_depth = 1,
-			num_levels = 1,
-		},
-	)
-	sampler := sdl.CreateGPUSampler(device = gpu, createinfo = sdl.GPUSamplerCreateInfo{})
-
-	// VERTEX DATA COPYING
-	// Vertex data
-	vertices := []Vertex_Data {
-		{pos = {-0.5, 0.5, 0}, color = WHITE, uv = {0, 0}}, // tl
-		{pos = {0.5, 0.5, 0}, color = WHITE, uv = {1, 0}}, // tr
-		{pos = {-0.5, -0.5, 0}, color = WHITE, uv = {0, 1}}, // bl
-		{pos = {0.5, -0.5, 0}, color = WHITE, uv = {1, 1}}, // br
-	}
-	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
-	// Index data
-	indices := []u16{0, 1, 2, 2, 1, 3}
-	indices_byte_size := len(indices) * size_of(indices[0])
-
-	// The actual GPU-side buffer that will be used for rendering
-	vertex_buf := sdl.CreateGPUBuffer(
-		device = gpu,
-		createinfo = {usage = {.VERTEX}, size = u32(vertices_byte_size)},
-	)
-	index_buf := sdl.CreateGPUBuffer(
-		device = gpu,
-		createinfo = {usage = {.INDEX}, size = u32(indices_byte_size)},
-	)
-	// A staging buffer in a memory type that allows CPU access; transfer from CPU to GPU
-	transfer_buf := sdl.CreateGPUTransferBuffer(
-		device = gpu,
-		createinfo = {usage = .UPLOAD, size = u32(vertices_byte_size + indices_byte_size)},
-	)
-	// A pointer to the mapped memory of the transfer buffer, which allows the CPU to write directly to it
-	transfer_mem := transmute([^]byte)sdl.MapGPUTransferBuffer(
-		device = gpu,
-		transfer_buffer = transfer_buf,
-		cycle = false,
-	)
-	mem.copy(dst = transfer_mem, src = raw_data(vertices), len = vertices_byte_size)
-	mem.copy(
-		dst = transfer_mem[vertices_byte_size:],
-		src = raw_data(indices),
-		len = indices_byte_size,
-	)
-	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = transfer_buf)
-
-	tex_transfer_buf := sdl.CreateGPUTransferBuffer(
-		device = gpu,
-		createinfo = sdl.GPUTransferBufferCreateInfo {
-			usage = .UPLOAD,
-			size = u32(pixels_byte_size),
-		},
-	)
-	tex_transfer_mem := sdl.MapGPUTransferBuffer(gpu, tex_transfer_buf, false)
-	mem.copy(tex_transfer_mem, pixels, int(pixels_byte_size))
-	sdl.UnmapGPUTransferBuffer(gpu, tex_transfer_buf)
-
-	// Copy Command Buffer
-	copy_cmd_buf := sdl.AcquireGPUCommandBuffer(gpu)
-	copy_pass := sdl.BeginGPUCopyPass(copy_cmd_buf)
-	sdl.UploadToGPUBuffer(
-		copy_pass = copy_pass,
-		source = sdl.GPUTransferBufferLocation{transfer_buffer = transfer_buf},
-		destination = sdl.GPUBufferRegion{buffer = vertex_buf, size = u32(vertices_byte_size)},
-		cycle = false,
-	)
-	sdl.UploadToGPUBuffer(
-		copy_pass = copy_pass,
-		source = sdl.GPUTransferBufferLocation {
-			transfer_buffer = transfer_buf,
-			offset = u32(vertices_byte_size),
-		},
-		destination = sdl.GPUBufferRegion{buffer = index_buf, size = u32(indices_byte_size)},
-		cycle = false,
-	)
-	sdl.UploadToGPUTexture(
-		copy_pass = copy_pass,
-		source = sdl.GPUTextureTransferInfo{transfer_buffer = tex_transfer_buf},
-		destination = sdl.GPUTextureRegion {
-			texture = texture,
-			w = u32(img_size.x),
-			h = u32(img_size.y),
-			d = 1,
-		},
-		cycle = false,
-	)
-	sdl.EndGPUCopyPass(copy_pass)
-	ok = sdl.SubmitGPUCommandBuffer(copy_cmd_buf);assert(ok)
-	sdl.ReleaseGPUTransferBuffer(gpu, transfer_buf)
-	sdl.ReleaseGPUTransferBuffer(gpu, tex_transfer_buf)
+	texture := load_texture(device = gpu, file_name = "assets/cobblestone_1.png")
 
 	vertex_attrs := []sdl.GPUVertexAttribute {
 		{location = 0, format = .FLOAT3, offset = u32(offset_of(Vertex_Data, pos))},
@@ -245,9 +130,7 @@ main :: proc() {
 		0.0001,
 		1000,
 	)
-	UBO :: struct {
-		mvp: matrix[4, 4]f32,
-	}
+
 	last_ticks := sdl.GetTicks()
 
 	main_loop: for {
@@ -297,28 +180,18 @@ main :: proc() {
 			}
 			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
-			sdl.BindGPUVertexBuffers(
+
+			draw_texture(
+				device = gpu,
 				render_pass = render_pass,
-				first_slot = 0,
-				bindings = &(sdl.GPUBufferBinding{buffer = vertex_buf}),
-				num_bindings = 1,
+				command_buffer = cmd_buf,
+				window = window,
+				texture = texture,
+				pos_x = -0.5,
+				pos_y = -0.5,
+				tint = WHITE,
 			)
-			sdl.BindGPUIndexBuffer(
-				render_pass = render_pass,
-				binding = {buffer = index_buf},
-				index_element_size = ._16BIT,
-			)
-			sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
-			sdl.BindGPUFragmentSamplers(
-				render_pass = render_pass,
-				first_slot = 0,
-				texture_sampler_bindings = &(sdl.GPUTextureSamplerBinding {
-						texture = texture,
-						sampler = sampler,
-					}),
-				num_bindings = 1,
-			)
-			sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
+
 			sdl.EndGPURenderPass(render_pass)
 		}
 
