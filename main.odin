@@ -20,10 +20,11 @@ default_context: runtime.Context
 
 /* TYPES */
 Vec3 :: [3]f32
+Vec2 :: [2]f32
 Vertex_Data :: struct {
 	pos:   Vec3,
 	color: sdl.FColor,
-	uv:    [2]f32,
+	uv:    Vec2,
 }
 
 when ODIN_OS == .Windows {
@@ -103,17 +104,20 @@ main :: proc() {
 	)
 	sampler := sdl.CreateGPUSampler(device = gpu, createinfo = sdl.GPUSamplerCreateInfo{})
 
-	// VERTEX DATA COPYING
-	// Vertex data
-	vertices := []Vertex_Data {
-		{pos = {-0.5, 0.5, 0}, color = WHITE, uv = {0, 0}}, // tl
-		{pos = {0.5, 0.5, 0}, color = WHITE, uv = {1, 0}}, // tr
-		{pos = {-0.5, -0.5, 0}, color = WHITE, uv = {0, 1}}, // bl
-		{pos = {0.5, -0.5, 0}, color = WHITE, uv = {1, 1}}, // br
+	obj_data := obj_load("sedan-sports.obj")
+	vertices := make([]Vertex_Data, len(obj_data.faces))
+	indices := make([]u16, len(obj_data.faces))
+	for face, i in obj_data.faces {
+		vertices[i] = {
+			pos   = obj_data.positions[face.pos],
+			color = WHITE,
+			uv    = obj_data.uvs[face.uv],
+		}
+		indices[i] = u16(i)
 	}
-	vertices_byte_size := len(vertices) * size_of(Vertex_Data)
-	// Index data
-	indices := []u16{0, 1, 2, 2, 1, 3}
+	obj_destroy(obj_data)
+	num_indices := len(indices)
+	vertices_byte_size := len(vertices) * size_of(vertices[0])
 	indices_byte_size := len(indices) * size_of(indices[0])
 
 	// The actual GPU-side buffer that will be used for rendering
@@ -143,6 +147,8 @@ main :: proc() {
 		len = indices_byte_size,
 	)
 	sdl.UnmapGPUTransferBuffer(device = gpu, transfer_buffer = transfer_buf)
+	delete(indices)
+	delete(vertices)
 
 	tex_transfer_buf := sdl.CreateGPUTransferBuffer(
 		device = gpu,
@@ -305,7 +311,8 @@ main :: proc() {
 					}),
 				num_bindings = 1,
 			)
-			sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
+			// sdl.DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0)
+			sdl.DrawGPUIndexedPrimitives(render_pass, u32(num_indices), 1, 0, 0, 0)
 			sdl.EndGPURenderPass(render_pass)
 		}
 
