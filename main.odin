@@ -10,6 +10,7 @@ import stbi "vendor:stb/image"
 
 
 /* CONSTANTS */
+DEPTH_TEXTURE_FORMAT :: sdl.GPUTextureFormat.D24_UNORM
 ROTATION_SPEED := linalg.to_radians(f32(90))
 WHITE := sdl.FColor{1, 1, 1, 1}
 
@@ -82,13 +83,10 @@ main :: proc() {
 	)
 
 	img_size: [2]i32
-	pixels := stbi.load(
-		"cobblestone_1.png",
-		&img_size.x,
-		&img_size.y,
-		nil,
-		4,
-	);assert(pixels != nil)
+	// the obj file uv's Y-coordinates are inverted: instead of 0 at the top and 1 at the bottom,
+	// it's inverted so 0 is at the bottom and 1 on the top. stbi provides a functionality to flip it:
+	stbi.set_flip_vertically_on_load(1)
+	pixels := stbi.load("colormap.png", &img_size.x, &img_size.y, nil, 4);assert(pixels != nil)
 	pixels_byte_size := img_size.x * img_size.y * 4
 
 	texture := sdl.CreateGPUTexture(
@@ -102,16 +100,33 @@ main :: proc() {
 			num_levels = 1,
 		},
 	)
+	win_size: [2]i32
+	ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
+	// Simple depth texture with a specific depth format; width and height will be of our render target (win_size)
+	// If the window must be resizable, then we need to create this depth texture each time we change the window size
+	depth_texture := sdl.CreateGPUTexture(
+		gpu,
+		{
+			format = DEPTH_TEXTURE_FORMAT,
+			usage = {.DEPTH_STENCIL_TARGET},
+			width = u32(win_size.x),
+			height = u32(win_size.y),
+			layer_count_or_depth = 1,
+			num_levels = 1,
+		},
+	)
+
 	sampler := sdl.CreateGPUSampler(device = gpu, createinfo = sdl.GPUSamplerCreateInfo{})
 
-	obj_data := obj_load("sedan-sports.obj")
+	obj_data := obj_load("tractor-police.obj")
 	vertices := make([]Vertex_Data, len(obj_data.faces))
 	indices := make([]u16, len(obj_data.faces))
 	for face, i in obj_data.faces {
+		uv := obj_data.uvs[face.uv]
 		vertices[i] = {
 			pos   = obj_data.positions[face.pos],
 			color = WHITE,
-			uv    = obj_data.uvs[face.uv],
+			uv    = {uv.x, uv.y},
 		}
 		indices[i] = u16(i)
 	}
@@ -202,34 +217,38 @@ main :: proc() {
 	}
 
 	pipeline := sdl.CreateGPUGraphicsPipeline(
-		gpu,
-		{
-			vertex_shader = vert_shader,
-			fragment_shader = frag_shader,
-			primitive_type = .TRIANGLELIST,
-			vertex_input_state = {
-				num_vertex_buffers = 1,
-				vertex_buffer_descriptions = &(sdl.GPUVertexBufferDescription {
-						slot = 0,
-						pitch = size_of(Vertex_Data),
-					}),
-				num_vertex_attributes = u32(len(vertex_attrs)),
-				vertex_attributes = raw_data(vertex_attrs),
-			},
-			target_info = {
-				num_color_targets = 1,
-				color_target_descriptions = &(sdl.GPUColorTargetDescription {
-						format = sdl.GetGPUSwapchainTextureFormat(gpu, window),
-					}),
-			},
+	gpu,
+	{
+		vertex_shader = vert_shader,
+		fragment_shader = frag_shader,
+		primitive_type = .TRIANGLELIST,
+		vertex_input_state = {
+			num_vertex_buffers = 1,
+			vertex_buffer_descriptions = &(sdl.GPUVertexBufferDescription {
+					slot = 0,
+					pitch = size_of(Vertex_Data),
+				}),
+			num_vertex_attributes = u32(len(vertex_attrs)),
+			vertex_attributes = raw_data(vertex_attrs),
 		},
+		depth_stencil_state = {
+			enable_depth_test  = true,
+			enable_depth_write = true,
+			compare_op         = .LESS, // Pixels closer to the camera have lower (less) value than those farther away
+		},
+		target_info = {
+			num_color_targets = 1,
+			color_target_descriptions = &(sdl.GPUColorTargetDescription {
+					format = sdl.GetGPUSwapchainTextureFormat(gpu, window),
+				}),
+			has_depth_stencil_target = true,
+			depth_stencil_format = DEPTH_TEXTURE_FORMAT,
+		},
+	},
 	)
 
 	sdl.ReleaseGPUShader(gpu, vert_shader)
 	sdl.ReleaseGPUShader(gpu, frag_shader)
-
-	win_size: [2]i32
-	ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
 
 	rotation := f32(0)
 	proj_mat := linalg.matrix4_perspective_f32(
@@ -275,7 +294,7 @@ main :: proc() {
 		// Update rotation
 		rotation += ROTATION_SPEED * delta_time
 		model_mat :=
-			linalg.matrix4_translate_f32({0, 0, -2}) *
+			linalg.matrix4_translate_f32({0, -1, -3}) *
 			linalg.matrix4_rotate_f32(rotation, {0, 1, 0})
 		ubo := UBO {
 			mvp = proj_mat * model_mat,
@@ -288,7 +307,13 @@ main :: proc() {
 				clear_color = {0, 0.2, 0.4, 1},
 				store_op    = .STORE,
 			}
-			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, nil)
+			depth_target_info := sdl.GPUDepthStencilTargetInfo {
+				texture     = depth_texture,
+				load_op     = .CLEAR, // Clear for rendering a new frame
+				clear_depth = 1, // 1 since everything we want to draw has a depth value smaller than 1
+				store_op    = .DONT_CARE,
+			}
+			render_pass := sdl.BeginGPURenderPass(cmd_buf, &color_target, 1, &depth_target_info)
 			sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
 			sdl.BindGPUVertexBuffers(
 				render_pass = render_pass,
