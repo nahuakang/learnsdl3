@@ -1,16 +1,20 @@
 package main
 
 import "base:runtime"
+import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import sdl "vendor:sdl3"
 import stbi "vendor:stb/image"
 
 
 /* CONSTANTS */
+CONTENT_DIR :: "content"
 DEPTH_TEXTURE_FORMAT :: sdl.GPUTextureFormat.D24_UNORM
 ROTATION_SPEED := linalg.to_radians(f32(90))
 WHITE := sdl.FColor{1, 1, 1, 1}
@@ -68,13 +72,9 @@ Vertex_Data :: struct {
 when ODIN_OS == .Windows {
 	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.SPIRV}
 	entrypoint := "main"
-	frag_shader_code := #load("shader.spv.frag")
-	vert_shader_code := #load("shader.spv.vert")
 } else when ODIN_OS == .Darwin {
 	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.MSL}
 	entrypoint := "main0"
-	frag_shader_code := #load("shader.metal.frag")
-	vert_shader_code := #load("shader.metal.vert")
 }
 
 
@@ -128,20 +128,8 @@ init :: proc() {
 
 
 setup_pipeline :: proc() {
-	vert_shader := load_shader(
-		gpu,
-		vert_shader_code,
-		.VERTEX,
-		num_uniform_buffers = 1,
-		num_samplers = 0,
-	)
-	frag_shader := load_shader(
-		gpu,
-		frag_shader_code,
-		.FRAGMENT,
-		num_uniform_buffers = 0,
-		num_samplers = 1,
-	)
+	vert_shader := load_shader(gpu, "shader.vert", num_uniform_buffers = 1, num_samplers = 0)
+	frag_shader := load_shader(gpu, "shader.frag", num_uniform_buffers = 0, num_samplers = 1)
 
 	vertex_attrs := []sdl.GPUVertexAttribute {
 		{location = 0, format = .FLOAT3, offset = u32(offset_of(Vertex_Data, pos))},
@@ -194,13 +182,16 @@ setup_pipeline :: proc() {
 
 
 load_model :: proc(mesh_file: string, texture_file: string) -> Model {
-	texture_file := strings.clone_to_cstring(texture_file, context.temp_allocator)
+	mesh_path := filepath.join({CONTENT_DIR, "meshes", mesh_file}, context.temp_allocator)
+	texture_path := filepath.join({CONTENT_DIR, "textures", texture_file}, context.temp_allocator)
+	texture_file := strings.clone_to_cstring(texture_path, context.temp_allocator)
 
 	img_size: [2]i32
 	// the obj file uv's Y-coordinates are inverted: instead of 0 at the top and 1 at the bottom,
 	// it's inverted so 0 is at the bottom and 1 on the top. stbi provides a functionality to flip it:
 	stbi.set_flip_vertically_on_load(1)
-	pixels := stbi.load("colormap.png", &img_size.x, &img_size.y, nil, 4);assert(pixels != nil)
+	fmt.printfln("texture_file: %", texture_file)
+	pixels := stbi.load(texture_file, &img_size.x, &img_size.y, nil, 4);assert(pixels != nil)
 	pixels_byte_size := img_size.x * img_size.y * 4
 
 	texture := sdl.CreateGPUTexture(
@@ -214,7 +205,7 @@ load_model :: proc(mesh_file: string, texture_file: string) -> Model {
 			num_levels = 1,
 		},
 	)
-	obj_data := obj_load(mesh_file)
+	obj_data := obj_load(mesh_path)
 
 	vertices := make([]Vertex_Data, len(obj_data.faces))
 	indices := make([]u16, len(obj_data.faces))
@@ -468,11 +459,24 @@ main :: proc() {
 
 load_shader :: proc(
 	device: ^sdl.GPUDevice,
-	code: []u8,
-	stage: sdl.GPUShaderStage,
+	shaderfile: string,
 	num_uniform_buffers: u32,
 	num_samplers: u32,
 ) -> ^sdl.GPUShader {
+	stage: sdl.GPUShaderStage
+	switch filepath.ext(shaderfile) {
+	case ".vert":
+		stage = .VERTEX
+	case ".frag":
+		stage = .FRAGMENT
+	}
+	shaderfile := filepath.join(
+		{CONTENT_DIR, "shaders", "out", shaderfile},
+		context.temp_allocator,
+	)
+	filename := strings.concatenate({shaderfile, ".spv"})
+	code, ok := os.read_entire_file_from_filename(filename, context.temp_allocator);assert(ok)
+
 	return sdl.CreateGPUShader(
 		device = device,
 		createinfo = sdl.GPUShaderCreateInfo {
