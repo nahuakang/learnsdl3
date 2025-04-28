@@ -15,7 +15,6 @@ import stbi "vendor:stb/image"
 
 /* CONSTANTS */
 CONTENT_DIR :: "content"
-DEPTH_TEXTURE_FORMAT :: sdl.GPUTextureFormat.D24_UNORM
 ROTATION_SPEED := linalg.to_radians(f32(90))
 WHITE := sdl.FColor{1, 1, 1, 1}
 
@@ -27,6 +26,7 @@ MOVE_SPEED :: 5
 /* VARIABLES */
 default_context: runtime.Context
 depth_texture: ^sdl.GPUTexture
+depth_texture_format := sdl.GPUTextureFormat.D16_UNORM
 gpu: ^sdl.GPUDevice
 pipeline: ^sdl.GPUGraphicsPipeline
 sampler: ^sdl.GPUSampler
@@ -69,14 +69,6 @@ Vertex_Data :: struct {
 	uv:    Vec2,
 }
 
-when ODIN_OS == .Windows {
-	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.SPIRV}
-	entrypoint := "main"
-} else when ODIN_OS == .Darwin {
-	GPU_SHADER_FORMAT: sdl.GPUShaderFormat = {.MSL}
-	entrypoint := "main0"
-}
-
 
 init :: proc() {
 	sdl.SetLogPriorities(.VERBOSE)
@@ -97,7 +89,7 @@ init :: proc() {
 
 	window = sdl.CreateWindow("Hello SDL3", 1280, 780, {});assert(window != nil)
 
-	gpu = sdl.CreateGPUDevice(GPU_SHADER_FORMAT, true, nil);assert(gpu != nil)
+	gpu = sdl.CreateGPUDevice({.SPIRV, .DXIL, .MSL}, true, nil);assert(gpu != nil)
 
 	ok = sdl.ClaimWindowForGPUDevice(gpu, window);assert(ok)
 
@@ -105,10 +97,17 @@ init :: proc() {
 
 	// Simple depth texture with a specific depth format; width and height will be of our render target (win_size)
 	// If the window must be resizable, then we need to create this depth texture each time we change the window size
+	try_depth_format :: proc(format: sdl.GPUTextureFormat) {
+		if sdl.GPUTextureSupportsFormat(gpu, format, .D2, {.DEPTH_STENCIL_TARGET}) {
+			depth_texture_format = format
+		}
+	}
+	try_depth_format(.D32_FLOAT)
+	try_depth_format(.D24_UNORM)
 	depth_texture = sdl.CreateGPUTexture(
 		gpu,
 		{
-			format = DEPTH_TEXTURE_FORMAT,
+			format = depth_texture_format,
 			usage = {.DEPTH_STENCIL_TARGET},
 			width = u32(win_size.x),
 			height = u32(win_size.y),
@@ -169,7 +168,7 @@ setup_pipeline :: proc() {
 						format = sdl.GetGPUSwapchainTextureFormat(gpu, window),
 					}),
 				has_depth_stencil_target = true,
-				depth_stencil_format = DEPTH_TEXTURE_FORMAT,
+				depth_stencil_format = depth_texture_format,
 			},
 		},
 	)
@@ -470,11 +469,30 @@ load_shader :: proc(
 	case ".frag":
 		stage = .FRAGMENT
 	}
+	format: sdl.GPUShaderFormatFlag
+	format_ext: string
+	entrypoint: cstring = "main"
+
+	supported_formats := sdl.GetGPUShaderFormats(device)
+	if .SPIRV in supported_formats {
+		format = .SPIRV
+		format_ext = ".spv"
+	} else if .MSL in supported_formats {
+		format = .MSL
+		format_ext = ".msl"
+		entrypoint = "main0"
+	} else if .DXIL in supported_formats {
+		format = .DXIL
+		format_ext = ".dxil"
+	} else {
+		log.panicf("No supported shader format: {}", supported_formats)
+	}
+
 	shaderfile := filepath.join(
 		{CONTENT_DIR, "shaders", "out", shaderfile},
 		context.temp_allocator,
 	)
-	filename := strings.concatenate({shaderfile, ".spv"})
+	filename := strings.concatenate({shaderfile, format_ext})
 	code, ok := os.read_entire_file_from_filename(filename, context.temp_allocator);assert(ok)
 
 	return sdl.CreateGPUShader(
@@ -482,8 +500,8 @@ load_shader :: proc(
 		createinfo = sdl.GPUShaderCreateInfo {
 			code_size = len(code),
 			code = raw_data(code),
-			entrypoint = strings.clone_to_cstring(entrypoint),
-			format = GPU_SHADER_FORMAT,
+			entrypoint = entrypoint,
+			format = {format},
 			stage = stage,
 			num_uniform_buffers = num_uniform_buffers,
 			num_samplers = num_samplers,

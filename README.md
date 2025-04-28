@@ -4,16 +4,8 @@ This repository follows the code for nadako's [Odin+SDL3GPU tutorial on YouTube]
 
 ## Build
 
-On Windows, run:
+Use `build.odin`:
 
 ```shell
-.\build.bat run
-```
-
-On MacOS, run:
-
-```shell
-./build.sh
-
-./build.sh run
+odin run build.odin -file -- run
 ```
