@@ -21,7 +21,7 @@ WHITE := sdl.FColor{1, 1, 1, 1}
 
 /* CAMERA-RELATED */
 EYE_HEIGHT :: 1
-LOOK_SENSITIVITY :: 1 / 100000
+LOOK_SENSITIVITY :: 1.0 / 10.0
 MOVE_SPEED :: 5
 
 /* VARIABLES */
@@ -325,10 +325,10 @@ update_camera :: proc(dt: f32) {
 	// Why look.yaw - mouse_move.x:
 	// Mouse movement to the right is positive; positive angle will rotate to the left
 	// So we need to invert it to actually rotate right when the mouse_move is to the right
-	look.yaw = math.wrap(look.yaw - mouse_move.x, 360)
+	look.yaw = math.wrap(look.yaw - look_input.x, 360)
 	// -89 to 89 to avoid problems with Euler angles and extreme pitch angles
 	// Use quaternions for more complex features
-	look.pitch = math.clamp(look.pitch - mouse_move.y, -89, 89)
+	look.pitch = math.clamp(look.pitch - look_input.y, -89, 89)
 
 	look_mat := linalg.matrix3_from_yaw_pitch_roll_f32(
 		linalg.to_radians(look.yaw),
