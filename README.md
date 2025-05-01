@@ -9,3 +9,11 @@ Use `build.odin`:
 ```shell
 odin run build.odin -file -- run
 ```
+
+IMGUI support comes from:
+
+```shell
+cd ~/Odin/shared/
+git clone https://gitlab.com/nadako/odin-imgui -b sdlgpu3 imgui
+```
+
