@@ -1,6 +1,7 @@
 package main
 
 import "base:runtime"
+import "core:encoding/json"
 import "core:fmt"
 import "core:log"
 import "core:math"
@@ -58,11 +59,25 @@ Model :: struct {
 	num_indices: u32,
 	texture:     ^sdl.GPUTexture,
 }
+
+
 UBO :: struct {
 	mvp: matrix[4, 4]f32,
 }
+
+
+Shader_Info :: struct {
+	samplers:         u32,
+	storage_textures: u32,
+	storage_buffers:  u32,
+	uniform_buffers:  u32,
+}
+
+
 Vec3 :: [3]f32
 Vec2 :: [2]f32
+
+
 Vertex_Data :: struct {
 	pos:   Vec3,
 	color: sdl.FColor,
@@ -127,8 +142,8 @@ init :: proc() {
 
 
 setup_pipeline :: proc() {
-	vert_shader := load_shader(gpu, "shader.vert", num_uniform_buffers = 1, num_samplers = 0)
-	frag_shader := load_shader(gpu, "shader.frag", num_uniform_buffers = 0, num_samplers = 1)
+	vert_shader := load_shader(gpu, "shader.vert")
+	frag_shader := load_shader(gpu, "shader.frag")
 
 	vertex_attrs := []sdl.GPUVertexAttribute {
 		{location = 0, format = .FLOAT3, offset = u32(offset_of(Vertex_Data, pos))},
@@ -456,12 +471,7 @@ main :: proc() {
 }
 
 
-load_shader :: proc(
-	device: ^sdl.GPUDevice,
-	shaderfile: string,
-	num_uniform_buffers: u32,
-	num_samplers: u32,
-) -> ^sdl.GPUShader {
+load_shader :: proc(device: ^sdl.GPUDevice, shaderfile: string) -> ^sdl.GPUShader {
 	stage: sdl.GPUShaderStage
 	switch filepath.ext(shaderfile) {
 	case ".vert":
@@ -495,6 +505,8 @@ load_shader :: proc(
 	filename := strings.concatenate({shaderfile, format_ext})
 	code, ok := os.read_entire_file_from_filename(filename, context.temp_allocator);assert(ok)
 
+	info := load_shader_info(shaderfile)
+
 	return sdl.CreateGPUShader(
 		device = device,
 		createinfo = sdl.GPUShaderCreateInfo {
@@ -503,8 +515,26 @@ load_shader :: proc(
 			entrypoint = entrypoint,
 			format = {format},
 			stage = stage,
-			num_uniform_buffers = num_uniform_buffers,
-			num_samplers = num_samplers,
+			num_uniform_buffers = info.uniform_buffers,
+			num_samplers = info.samplers,
+			num_storage_buffers = info.storage_buffers,
+			num_storage_textures = info.storage_textures,
 		},
 	)
+}
+
+
+load_shader_info :: proc(shaderfile: string) -> Shader_Info {
+	json_filename := strings.concatenate({shaderfile, ".json"}, context.temp_allocator)
+	json_data, ok := os.read_entire_file_from_filename(
+		json_filename,
+		context.temp_allocator,
+	);assert(ok)
+	result: Shader_Info
+	err := json.unmarshal(
+		json_data,
+		&result,
+		allocator = context.temp_allocator,
+	);assert(err == nil)
+	return result
 }
