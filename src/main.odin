@@ -111,6 +111,8 @@ init :: proc() {
 
 	ok = sdl.ClaimWindowForGPUDevice(gpu, window);assert(ok)
 
+	ok = sdl.SetGPUSwapchainParameters(gpu, window, .SDR_LINEAR, .VSYNC);assert(ok)
+
 	ok = sdl.GetWindowSize(window, &win_size.x, &win_size.y);assert(ok)
 
 	// Simple depth texture with a specific depth format; width and height will be of our render target (win_size)
@@ -154,6 +156,15 @@ init_imgui :: proc() {
 	im_sdlgpu.Init(
 		&{Device = gpu, ColorTargetFormat = sdl.GetGPUSwapchainTextureFormat(gpu, window)},
 	)
+
+	// Since we're using the LINEAR swapchain composition mode,
+	// the colors are expected to be in linear space.
+	// IMGUI shaders don't do any transfering and the original style values are in sRGB
+	// so we convert them here.
+	style := im.GetStyle()
+	for &color in style.Colors {
+		color.rgb = linalg.pow(color.rgb, 2.2)
+	}
 }
 
 
@@ -227,12 +238,12 @@ load_model :: proc(mesh_file: string, texture_file: string) -> Model {
 	texture := sdl.CreateGPUTexture(
 		device = gpu,
 		createinfo = sdl.GPUTextureCreateInfo {
-			format = .R8G8B8A8_UNORM,
-			usage = {.SAMPLER},
-			width = u32(img_size.x),
-			height = u32(img_size.y),
+			format               = .R8G8B8A8_UNORM_SRGB, // pixels are in sRGB; converted to linear in shaders
+			usage                = {.SAMPLER},
+			width                = u32(img_size.x),
+			height               = u32(img_size.y),
 			layer_count_or_depth = 1,
-			num_levels = 1,
+			num_levels           = 1,
 		},
 	)
 	obj_data := obj_load(mesh_path)
@@ -396,7 +407,7 @@ main :: proc() {
 		1000,
 	)
 	last_ticks := sdl.GetTicks()
-	clear_color := sdl.FColor{0, 0.2, 0.4, 1}
+	clear_color := sdl.FColor{0, 0.023, 0.133, 1}
 
 	main_loop: for {
 		free_all(context.temp_allocator)
@@ -438,7 +449,7 @@ main :: proc() {
 		im.NewFrame()
 		if im.Begin("Inspector") {
 			im.Checkbox("Rotate", &rotate)
-			im.ColorEdit3("Clear Color", transmute(^[3]f32)&clear_color)
+			im.ColorEdit3("Clear Color", transmute(^[3]f32)&clear_color, {.Float})
 		}
 		im.End()
 
@@ -590,3 +601,4 @@ load_shader_info :: proc(shaderfile: string) -> Shader_Info {
 	);assert(err == nil)
 	return result
 }
+
