@@ -14,7 +14,10 @@ main :: proc() {
 	OUT :: EXE + ".exe" when ODIN_OS == .Windows else EXE
 	run_str("odin build src -debug -out:" + OUT)
 
-	files, err := os.read_all_directory_by_path("content/shaders/src", context.temp_allocator)
+	files, err := os.read_all_directory_by_path(
+		"content/shaders/src",
+		context.temp_allocator,
+	)
 	if err != nil {
 		log.errorf("Error reading shader sources: {}", err)
 		os.exit(1)
@@ -31,7 +34,9 @@ main :: proc() {
 
 shadercross :: proc(file: os.File_Info, format: string) {
 	basename := filepath.stem(file.name)
-	outfile := filepath.join({"content/shaders/out", strings.concatenate({basename, ".", format})})
+	outfile := filepath.join(
+		{"content/shaders/out", strings.concatenate({basename, ".", format})},
+	)
 	run({"shadercross", file.fullpath, "-o", outfile})
 }
 
@@ -54,7 +59,12 @@ run :: proc(cmd: []string) {
 
 exec :: proc(cmd: []string) -> (code: int, error: os.Error) {
 	process := os.process_start(
-		{command = cmd, stdin = os.stdin, stdout = os.stdout, stderr = os.stderr},
+		{
+			command = cmd,
+			stdin = os.stdin,
+			stdout = os.stdout,
+			stderr = os.stderr,
+		},
 	) or_return
 	state := os.process_wait(process) or_return
 	os.process_close(process) or_return
