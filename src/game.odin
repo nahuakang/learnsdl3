@@ -67,6 +67,9 @@ game_init :: proc() {
 		},
 	)
 
+	sdl.EndGPUCopyPass(copy_pass)
+	ok := sdl.SubmitGPUCommandBuffer(copy_cmd_buf);assert(ok)
+
 	g.entities = slice.clone(
 		[]Entity {
 			{model_id = 0, position = {0, 0, 0}, rotation = 1},
@@ -86,9 +89,6 @@ game_init :: proc() {
 			},
 		},
 	)
-
-	sdl.EndGPUCopyPass(copy_pass)
-	ok := sdl.SubmitGPUCommandBuffer(copy_cmd_buf);sdl_assert(ok)
 
 	g.rotate = true
 

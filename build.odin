@@ -12,7 +12,7 @@ main :: proc() {
 
 	EXE :: "learnsdl3"
 	OUT :: EXE + ".exe" when ODIN_OS == .Windows else EXE
-	run_str("odin build src -debug -out:" + OUT)
+	run_str("odin build src -debug -out:" + OUT + " -error-pos-style:unix")
 
 	files, err := os.read_all_directory_by_path(
 		"content/shaders/src",

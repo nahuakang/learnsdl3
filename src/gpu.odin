@@ -31,7 +31,7 @@ upload_texture :: proc(
 		tex_transfer_buf,
 		false,
 	)
-	mem.copy(tex_transfer_mem, raw_data(pixels), int(len(pixels)))
+	mem.copy(tex_transfer_mem, raw_data(pixels), len(pixels))
 	sdl.UnmapGPUTransferBuffer(g.gpu, tex_transfer_buf)
 
 	sdl.UploadToGPUTexture(
