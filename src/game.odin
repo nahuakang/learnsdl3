@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import im "shared:imgui"
 import sdl "vendor:sdl3"
@@ -35,8 +36,18 @@ Mesh :: struct {
 
 
 Model :: struct {
-	using mesh: Mesh, // TODO(nahua): Temporary using
-	texture:    ^sdl.GPUTexture,
+	mesh:    Mesh,
+	texture: ^sdl.GPUTexture,
+}
+
+
+Model_Id :: distinct int
+
+
+Entity :: struct {
+	model_id: Model_Id,
+	position: Vec3,
+	rotation: Quat,
 }
 
 
@@ -46,7 +57,35 @@ game_init :: proc() {
 	copy_cmd_buf := sdl.AcquireGPUCommandBuffer(g.gpu)
 	copy_pass := sdl.BeginGPUCopyPass(copy_cmd_buf)
 
-	g.model = load_model(copy_pass, "tractor-police.obj", "colormap.png")
+	colormap := load_texture_file(copy_pass, "colormap.png")
+
+	g.models = slice.clone(
+		[]Model {
+			{load_obj_file(copy_pass, "tractor-police.obj"), colormap},
+			{load_obj_file(copy_pass, "sedan-sports.obj"), colormap},
+			{load_obj_file(copy_pass, "ambulance.obj"), colormap},
+		},
+	)
+
+	g.entities = slice.clone(
+		[]Entity {
+			{model_id = 0, position = {0, 0, 0}, rotation = 1},
+			{
+				model_id = 2,
+				position = {-3, 0, 0},
+				rotation = linalg.quaternion_from_euler_angle_y_f32(
+					-15 * linalg.RAD_PER_DEG,
+				),
+			},
+			{
+				model_id = 1,
+				position = {3, 0, 0},
+				rotation = linalg.quaternion_from_euler_angle_y_f32(
+					-15 * linalg.RAD_PER_DEG,
+				),
+			},
+		},
+	)
 
 	sdl.EndGPUCopyPass(copy_pass)
 	ok := sdl.SubmitGPUCommandBuffer(copy_cmd_buf);sdl_assert(ok)
@@ -73,7 +112,11 @@ game_update :: proc(delta_time: f32) {
 	im.End()
 
 	// update game state
-	if g.rotate do g.rotation += ROTATION_SPEED * delta_time
+	if g.rotate {
+		g.entities[0].rotation *= linalg.quaternion_from_euler_angle_y_f32(
+			ROTATION_SPEED * delta_time,
+		)
+	}
 	update_camera(delta_time)
 }
 
@@ -93,13 +136,6 @@ game_render :: proc(
 		g.camera.target,
 		{0, 1, 0},
 	)
-	model_mat :=
-		linalg.matrix4_translate_f32({0, 0, 0}) *
-		linalg.matrix4_rotate_f32(g.rotation, {0, 1, 0})
-
-	ubo := UBO {
-		mvp = proj_mat * view_mat * model_mat,
-	}
 
 	color_target := sdl.GPUColorTargetInfo {
 		texture     = swapchain_tex,
@@ -119,25 +155,53 @@ game_render :: proc(
 		1,
 		&depth_target_info,
 	)
-	sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
-	sdl.BindGPUGraphicsPipeline(render_pass, g.pipeline)
-	sdl.BindGPUVertexBuffers(
-		render_pass,
-		0,
-		&(sdl.GPUBufferBinding{buffer = g.model.vertex_buf}),
-		1,
-	)
-	sdl.BindGPUIndexBuffer(render_pass, {buffer = g.model.index_buf}, ._16BIT)
-	sdl.BindGPUFragmentSamplers(
-		render_pass,
-		0,
-		&(sdl.GPUTextureSamplerBinding {
-				texture = g.model.texture,
-				sampler = g.sampler,
-			}),
-		1,
-	)
-	sdl.DrawGPUIndexedPrimitives(render_pass, g.model.num_indices, 1, 0, 0, 0)
+
+	for entity in g.entities {
+		// NOTE: TRS: Translation, Rotation, and Scale
+		model_mat := linalg.matrix4_from_trs_f32(
+			entity.position,
+			entity.rotation,
+			1,
+		)
+
+		ubo := UBO {
+			mvp = proj_mat * view_mat * model_mat,
+		}
+
+		sdl.PushGPUVertexUniformData(cmd_buf, 0, &ubo, size_of(ubo))
+		sdl.BindGPUGraphicsPipeline(render_pass, g.pipeline)
+
+		model := g.models[entity.model_id]
+		sdl.BindGPUVertexBuffers(
+			render_pass,
+			0,
+			&(sdl.GPUBufferBinding{buffer = model.mesh.vertex_buf}),
+			1,
+		)
+		sdl.BindGPUIndexBuffer(
+			render_pass,
+			{buffer = model.mesh.index_buf},
+			._16BIT,
+		)
+		sdl.BindGPUFragmentSamplers(
+			render_pass,
+			0,
+			&(sdl.GPUTextureSamplerBinding {
+					texture = model.texture,
+					sampler = g.sampler,
+				}),
+			1,
+		)
+		sdl.DrawGPUIndexedPrimitives(
+			render_pass,
+			model.mesh.num_indices,
+			1,
+			0,
+			0,
+			0,
+		)
+	}
+
 	sdl.EndGPURenderPass(render_pass)
 }
 
